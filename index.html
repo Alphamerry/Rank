@@ -89,7 +89,7 @@
 <body>
     <div class="container">
         <div class="title">🏆 实时积分排行榜</div>
-        <div class="tips">数据每 10 秒自动刷新 | 防刷</div>
+        <div class="tips">数据每 3 秒自动刷新 | 安全防刷</div>
 
         <table>
             <tr>
@@ -102,23 +102,30 @@
     </div>
 
     <script>
-        // ====================== 只需要改这里 ======================
+        // ====================== 只需要改这里 2 个 ======================
         const SUPABASE_URL = "https://halvzhhrfeonpaedwljk.supabase.co";
-        // ==========================================================
+        const SUPABASE_ANON_KEY = "sb_publishable_Nrq50o8LwKHFZB-KTvE4aw_NYU1sNgx";
+        // ==============================================================
 
         // 自动刷新
-        setInterval(loadRank, 3000);
+        setInterval(loadRank, 10000);
         loadRank();
 
         async function loadRank() {
             try {
                 const res = await fetch(
-                    `${SUPABASE_URL}/rest/v1/scores?select=name,score&is_banned=eq.false&order=score.desc&limit=100`
+                    `${SUPABASE_URL}/rest/v1/scores?select=name,score&is_banned=eq.false&order=score.desc&limit=100`,
+                    {
+                        headers: {
+                            "apikey": SUPABASE_ANON_KEY,
+                            "Authorization": "Bearer " + SUPABASE_ANON_KEY
+                        }
+                    }
                 );
                 const list = await res.json();
                 renderList(list);
             } catch (e) {
-                console.log("加载失败");
+                console.log("加载失败", e);
             }
         }
 
