@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时积分排行榜</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+        }
+
+        body {
+            background: #f7f8fa;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+        }
+
+        .title {
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .tips {
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 16px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            padding: 12px 10px;
+            font-size: 14px;
+            color: #666;
+            border-bottom: 1px solid #eee;
+        }
+
+        td {
+            padding: 14px 10px;
+            font-size: 15px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .top1 {
+            background-color: #fff6d6;
+            font-weight: bold;
+        }
+
+        .top2 {
+            background-color: #f5f5f5;
+        }
+
+        .top3 {
+            background-color: #fff0e6;
+        }
+
+        .rank {
+            width: 50px;
+            text-align: center;
+        }
+
+        .score {
+            text-align: right;
+            font-weight: bold;
+            color: #ff4d4f;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="title">🏆 实时积分排行榜</div>
+        <div class="tips">数据每 3 秒自动刷新 | 安全防刷</div>
+
+        <table>
+            <tr>
+                <th class="rank">排名</th>
+                <th>昵称</th>
+                <th class="score">积分</th>
+            </tr>
+            <tbody id="rankList"></tbody>
+        </table>
+    </div>
+
+    <script>
+        // ====================== 只需要改这里 ======================
+        const SUPABASE_URL = "https://xxxx.supabase.co";
+        // ==========================================================
+
+        // 自动刷新
+        setInterval(loadRank, 3000);
+        loadRank();
+
+        async function loadRank() {
+            try {
+                const res = await fetch(
+                    `${SUPABASE_URL}/rest/v1/scores?select=name,score&is_banned=eq.false&order=score.desc&limit=100`
+                );
+                const list = await res.json();
+                renderList(list);
+            } catch (e) {
+                console.log("加载失败");
+            }
+        }
+
+        function renderList(list) {
+            let html = "";
+            list.forEach((item, index) => {
+                const rank = index + 1;
+                let className = "";
+
+                if (rank === 1) className = "top1";
+                else if (rank === 2) className = "top2";
+                else if (rank === 3) className = "top3";
+
+                html += `
+                <tr class="${className}">
+                    <td class="rank">${rank}</td>
+                    <td>${escapeHtml(item.name)}</td>
+                    <td class="score">${item.score}</td>
+                </tr>`;
+            });
+
+            document.getElementById("rankList").innerHTML = html;
+        }
+
+        function escapeHtml(str) {
+            return str
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+    </script>
+</body>
+</html>
