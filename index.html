@@ -4,159 +4,277 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>实时积分排行榜</title>
+    <script type="module">
+        import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+        // ⚠️ 替换为你的实际配置
+        const SUPABASE_URL = 'https://halvzhhrfeonpaedwljk.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_uuA3hOceSzkfSC6eoXbNbQ_30JTMiT3';
+        const TOP_N = 50;
+
+        const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        const tbody = document.getElementById('score-body');
+        const statusEl = document.getElementById('conn-status');
+        const countEl = document.getElementById('total-count');
+
+        let scores = [];
+        let renderTimer = null;
+
+        // ========== 工具函数 ==========
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str ?? '';
+            return div.innerHTML;
+        }
+
+        function formatTime(isoStr) {
+            try {
+                return new Date(isoStr).toLocaleString('zh-CN', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false
+                });
+            } catch { return '-'; }
+        }
+
+        function sortAndSlice(arr) {
+            return arr.sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                return new Date(a.last_submit) - new Date(b.last_submit);
+            }).slice(0, TOP_N);
+        }
+
+        function renderTable() {
+            countEl.textContent = scores.length;
+            if (scores.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="empty">暂无数据</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = scores.map((row, i) => {
+                const rank = i + 1;
+                let rankDisplay = `<span class="rank-num">${rank}</span>`;
+                let rowClass = '';
+
+                // 特殊处理前三名
+                if (rank === 1) {
+                    rankDisplay = '🥇';
+                    rowClass = 'rank-1';
+                } else if (rank === 2) {
+                    rankDisplay = '🥈';
+                    rowClass = 'rank-2';
+                } else if (rank === 3) {
+                    rankDisplay = '🥉';
+                    rowClass = 'rank-3';
+                }
+
+                return `
+                <tr class="${rowClass}">
+                    <td class="rank-cell">${rankDisplay}</td>
+                    <td class="username">${escapeHtml(row.name)}</td>
+                    <td class="num">${row.score.toLocaleString()}</td>
+                    <td class="time">${formatTime(row.last_submit)}</td>
+                </tr>
+            `}).join('');
+        }
+
+        // 节流渲染：应对每10秒高频更新，避免DOM过度重绘
+        function throttledRender() {
+            if (renderTimer) return;
+            renderTimer = setTimeout(() => {
+                scores = sortAndSlice(scores);
+                renderTable();
+                renderTimer = null;
+            }, 200);
+        }
+
+        // ========== ① 初始加载（排除被封禁用户） ==========
+        async function fetchInitial() {
+            statusEl.textContent = '⏳ 加载中...';
+            statusEl.className = 'loading';
+
+            const { data, error } = await supabase
+                .from('scores')
+                .select('uuid, name, score, last_submit')
+                .eq('is_banned', false)
+                .order('score', { ascending: false })
+                .order('last_submit', { ascending: true })
+                .limit(TOP_N);
+
+            if (error) {
+                console.error('初始加载失败:', error);
+                statusEl.textContent = '❌ 加载失败';
+                statusEl.className = 'error';
+                return;
+            }
+
+            scores = data || [];
+            renderTable();
+        }
+
+        // ========== ② Realtime 订阅 ==========
+        function subscribeRealtime() {
+            const channel = supabase
+                .channel('leaderboard-scores')
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'scores',
+                        filter: 'is_banned=eq.false' // ✅ 服务端过滤：只接收未封禁用户的变更
+                    },
+                    (payload) => {
+                        if (payload.eventType === 'DELETE') {
+                            // 用户被封禁或删除时，Supabase 会将旧记录推送到 DELETE 事件
+                            scores = scores.filter(s => s.uuid !== payload.old.uuid);
+                        } else {
+                            // INSERT 或 UPDATE
+                            const newRecord = {
+                                uuid: payload.new.uuid,
+                                name: payload.new.name,
+                                score: payload.new.score,
+                                last_submit: payload.new.last_submit
+                            };
+                            const idx = scores.findIndex(s => s.uuid === newRecord.uuid);
+                            if (idx >= 0) {
+                                scores[idx] = newRecord;
+                            } else {
+                                scores.push(newRecord);
+                            }
+                        }
+                        throttledRender();
+                    }
+                )
+                .subscribe((status) => {
+                    if (status === 'SUBSCRIBED') {
+                        statusEl.textContent = '🟢 实时连接中';
+                        statusEl.className = 'connected';
+                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        statusEl.textContent = '🔴 连接断开，重连中...';
+                        statusEl.className = 'error';
+                    }
+                });
+
+            window.addEventListener('beforeunload', () => supabase.removeChannel(channel));
+        }
+
+        // ========== 启动 ==========
+        await fetchInitial();
+        subscribeRealtime();
+    </script>
+
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: "Microsoft YaHei", Arial, sans-serif;
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; padding: 20px; }
+        .container { max-width: 700px; margin: 0 auto; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        h1 { font-size: 1.5rem; }
+        .meta { font-size: 0.85rem; color: #666; margin-top: 4px; }
+        #conn-status { font-size: 0.8rem; padding: 4px 10px; border-radius: 12px; background: #eee; white-space: nowrap; }
+        #conn-status.connected { background: #d4edda; color: #155724; }
+        #conn-status.loading { background: #fff3cd; color: #856404; }
+        #conn-status.error { background: #f8d7da; color: #721c24; }
+        
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        th { background: #f8f9fa; padding: 14px 16px; text-align: left; font-weight: 600; font-size: 0.85rem; color: #555; border-bottom: 2px solid #e9ecef; }
+        td { padding: 12px 16px; border-bottom: 1px solid #f0f0f0; font-size: 0.95rem; transition: background-color 0.2s; }
+        tr:last-child td { border-bottom: none; }
+        
+        /* 悬停效果 */
+        tr:not(.rank-1):not(.rank-2):not(.rank-3):hover { background: #fafbfc; }
+
+        .num, th:nth-child(3), th:nth-child(4) { text-align: right; }
+        td:nth-child(3), td:nth-child(4) { text-align: right; }
+        
+        .username { font-weight: 500; }
+        .time { color: #888; font-size: 0.82rem; font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: -0.02em; }
+        .num { font-variant-numeric: tabular-nums; font-weight: 600; color: #2563eb; }
+        .empty { text-align: center !important; color: #aaa; padding: 40px !important; }
+        
+        /* 排名列样式 */
+        .rank-cell { width: 60px; text-align: center; font-weight: bold; }
+        .rank-num { color: #666; }
+
+        /* --- 前三名特殊标记 --- */
+        
+        /* 第一名：金色 */
+        tr.rank-1 {
+            background: linear-gradient(to right, #fff9e6, #fff);
+        }
+        tr.rank-1 td {
+            border-bottom: 1px solid #ffeeba;
+            color: #b45309;
+        }
+        tr.rank-1 .username {
+            font-weight: 700;
+            color: #92400e;
+        }
+        tr.rank-1 .num {
+            color: #d97706;
+            font-size: 1.1em;
         }
 
-        body {
-            background: #f7f8fa;
-            padding: 20px;
+        /* 第二名：银色 */
+        tr.rank-2 {
+            background: linear-gradient(to right, #f3f4f6, #fff);
+        }
+        tr.rank-2 td {
+            border-bottom: 1px solid #e5e7eb;
+            color: #4b5563;
+        }
+        tr.rank-2 .username {
+            font-weight: 600;
         }
 
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 16px;
-            padding: 24px;
-            box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+        /* 第三名：铜色 */
+        tr.rank-3 {
+            background: linear-gradient(to right, #fff1f2, #fff);
+        }
+        tr.rank-3 td {
+            border-bottom: 1px solid #fecdd3;
+            color: #9f1239;
+        }
+        tr.rank-3 .username {
+            font-weight: 600;
         }
 
-        .title {
-            text-align: center;
-            font-size: 24px;
-            font-weight: bold;
-            margin-bottom: 20px;
-            color: #333;
-        }
-
-        .tips {
-            text-align: center;
-            font-size: 12px;
-            color: #999;
-            margin-bottom: 16px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th {
-            text-align: left;
-            padding: 12px 10px;
-            font-size: 14px;
-            color: #666;
-            border-bottom: 1px solid #eee;
-        }
-
-        td {
-            padding: 14px 10px;
-            font-size: 15px;
-            border-bottom: 1px solid #f0f0f0;
-        }
-
-        .top1 {
-            background-color: #fff6d6;
-            font-weight: bold;
-        }
-
-        .top2 {
-            background-color: #f5f5f5;
-        }
-
-        .top3 {
-            background-color: #fff0e6;
-        }
-
-        .rank {
-            width: 50px;
-            text-align: center;
-        }
-
-        .score {
-            text-align: right;
-            font-weight: bold;
-            color: #ff4d4f;
+        /* 奖牌 Emoji 大小调整 */
+        tr.rank-1 .rank-cell,
+        tr.rank-2 .rank-cell,
+        tr.rank-3 .rank-cell {
+            font-size: 1.4rem;
+            line-height: 1;
         }
     </style>
 </head>
-
 <body>
     <div class="container">
-        <div class="title">🏆 实时积分排行榜</div>
-        <div class="tips">数据每 3 秒自动刷新 | 安全防刷</div>
-
+        <header>
+            <div>
+                <h1>🏆 实时积分排行榜</h1>
+                <div class="meta">展示 Top <span id="total-count">0</span> 名用户 · 实时同步</div>
+            </div>
+            <div id="conn-status">⏳ 初始化...</div>
+        </header>
         <table>
-            <tr>
-                <th class="rank">排名</th>
-                <th>昵称</th>
-                <th class="score">积分</th>
-            </tr>
-            <tbody id="rankList"></tbody>
+            <thead>
+                <tr>
+                    <th style="text-align: center;">排名</th>
+                    <th>用户名</th>
+                    <th>分数</th>
+                    <th>最后上传时间</th>
+                </tr>
+            </thead>
+            <tbody id="score-body">
+                <tr><td colspan="4" class="empty">加载中...</td></tr>
+            </tbody>
         </table>
     </div>
-
-    <script>
-        // ====================== 只需要改这里 2 个 ======================
-        const SUPABASE_URL = "https://halvzhhrfeonpaedwljk.supabase.co";
-        const SUPABASE_ANON_KEY = "sb_publishable_Nrq50o8LwKHFZB-KTvE4aw_NYU1sNgx";
-        // ==============================================================
-
-        // 自动刷新
-        setInterval(loadRank, 10000);
-        loadRank();
-
-        async function loadRank() {
-            try {
-                const res = await fetch(
-                    `${SUPABASE_URL}/rest/v1/scores?select=name,score&is_banned=eq.false&order=score.desc&limit=100`,
-                    {
-                        headers: {
-                            "apikey": SUPABASE_ANON_KEY,
-                            "Authorization": "Bearer " + SUPABASE_ANON_KEY
-                        }
-                    }
-                );
-                const list = await res.json();
-                renderList(list);
-            } catch (e) {
-                console.log("加载失败", e);
-            }
-        }
-
-        function renderList(list) {
-            let html = "";
-            list.forEach((item, index) => {
-                const rank = index + 1;
-                let className = "";
-
-                if (rank === 1) className = "top1";
-                else if (rank === 2) className = "top2";
-                else if (rank === 3) className = "top3";
-
-                html += `
-                <tr class="${className}">
-                    <td class="rank">${rank}</td>
-                    <td>${escapeHtml(item.name)}</td>
-                    <td class="score">${item.score}</td>
-                </tr>`;
-            });
-
-            document.getElementById("rankList").innerHTML = html;
-        }
-
-        function escapeHtml(str) {
-            return str
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#039;");
-        }
-    </script>
 </body>
 </html>
